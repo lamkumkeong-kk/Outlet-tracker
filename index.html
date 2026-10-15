@@ -102,43 +102,46 @@
 
 <script>
 /* ------------------------------------------------------------------
-   DATA LOADING — the only place data enters the dashboard.
-   Must resolve to an array of:
-   { outlet, week (YYYY-MM-DD), sales, target, orders, returns }
-
-   To connect Supabase later, replace the body of loadData() with e.g.:
-     const { data, error } = await supabase
-       .from('outlet_weekly')
-       .select('outlet, week, sales, target, orders, returns')
-       .order('week');
-     if (error) throw error;
-     return data;
+   SUPABASE CONFIG — the publishable key is safe in browser code because
+   row-level security allows read-only access. Never put a secret or
+   service-role key in this file.
 ------------------------------------------------------------------- */
-async function loadData() {
-  const csv = `outlet,week,sales,target,orders,returns
-Tampines,2026-09-07,18400,18000,612,9
-Tampines,2026-09-14,16100,18000,540,14
-Tampines,2026-09-21,19200,18000,640,8
-Jurong,2026-09-07,14200,15000,488,11
-Jurong,2026-09-14,12600,15000,430,19
-Jurong,2026-09-21,15300,15000,512,10
-Orchard,2026-09-07,22500,24000,690,12
-Orchard,2026-09-14,20100,24000,612,21
-Orchard,2026-09-21,24800,24000,742,9`;
-  const [head, ...lines] = csv.trim().split('\n');
-  const cols = head.split(',');
-  return lines.map(l => {
-    const v = l.split(',');
-    const r = {};
-    cols.forEach((c, i) => r[c] = v[i]);
-    ['sales', 'target', 'orders', 'returns'].forEach(k => r[k] = Number(r[k]));
-    return r;
+const SUPABASE_URL = 'https://nbpwaxjjpbbrrecivibv.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_6wqn1EJAPsocVOtcDnENEg_cZkzAsd7';
+
+async function supabaseGet(path) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
   });
+  if (!res.ok) throw new Error(`Supabase request failed (${res.status})`);
+  return res.json();
+}
+
+/* ------------------------------------------------------------------
+   DATA LOADING — the only place data enters the dashboard.
+   Tables: outlets, weekly_performance. View: outlet_weekly, returning
+   { outlet, week (YYYY-MM-DD), sales, target, orders, returns }
+------------------------------------------------------------------- */
+async function loadOutlets() {
+  const rows = await supabaseGet('outlets?select=name&order=name');
+  return rows.map(r => r.name);
+}
+
+async function loadData() {
+  const rows = await supabaseGet('outlet_weekly?select=outlet,week,sales,target,orders,returns&order=week,outlet');
+  return rows.map(r => ({
+    outlet: r.outlet,
+    week: r.week,
+    sales: Number(r.sales),
+    target: Number(r.target),
+    orders: Number(r.orders),
+    returns: Number(r.returns)
+  }));
 }
 
 /* ---------- App ---------- */
 const THRESHOLD = 0.9;
-const OUTLETS = ['All', 'Tampines', 'Jurong', 'Orchard'];
+let OUTLETS = ['All'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 let ALL = [];
 let current = 'All';
@@ -207,14 +210,16 @@ function render() {
 }
 
 (async function init() {
-  $('filter').innerHTML = OUTLETS.map(o =>
-    `<button type="button" data-outlet="${o}" role="tab">${o}</button>`).join('');
   $('filter').addEventListener('click', e => {
     const b = e.target.closest('button');
     if (b) { current = b.dataset.outlet; render(); }
   });
   try {
-    ALL = await loadData();
+    const [names, data] = await Promise.all([loadOutlets(), loadData()]);
+    OUTLETS = ['All', ...names];
+    ALL = data;
+    $('filter').innerHTML = OUTLETS.map(o =>
+      `<button type="button" data-outlet="${o}" role="tab">${o}</button>`).join('');
     render();
   } catch (err) {
     $('error').innerHTML = `<div class="error">Could not load data: ${err.message}</div>`;
