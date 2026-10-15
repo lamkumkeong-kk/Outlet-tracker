@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Outlet performance</title>
+<style>
+  :root {
+    --bg: #f4f2ef;
+    --card: #ffffff;
+    --ink: #2b2a28;
+    --muted: #8a857e;
+    --line: #e6e2dc;
+    --bar: #b9b2a8;
+    --accent: #e8751a;
+    --alert: #c0392b;
+    --alert-bg: #fbeceb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 20px 56px;
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+  h1 { margin: 0; font-size: 24px; font-weight: 650; letter-spacing: -0.01em; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .filter { display: flex; gap: 6px; background: var(--card); padding: 4px; border-radius: 999px; border: 1px solid var(--line); }
+  .filter button {
+    border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 7px 16px; border-radius: 999px; font: inherit; font-size: 13px; font-weight: 550;
+  }
+  .filter button:hover { color: var(--ink); }
+  .filter button.active { background: var(--accent); color: #fff; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 14px; }
+  .kpi .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  .kpi .value { font-size: 28px; font-weight: 650; margin-top: 6px; letter-spacing: -0.02em; }
+  .kpi .note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .kpi.hl .value { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: 1.6fr 1fr; gap: 14px; }
+  h2 { margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+  .hint { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .row { display: grid; grid-template-columns: 150px 1fr 52px; align-items: center; gap: 12px; padding: 5px 0; }
+  .row .name { font-size: 13px; }
+  .row .name small { display: block; color: var(--muted); font-size: 11px; }
+  .track { position: relative; height: 16px; background: #f0ede8; border-radius: 4px; }
+  .fill { height: 100%; border-radius: 4px; background: var(--bar); transition: width .3s; }
+  .fill.low { background: var(--alert); }
+  .target-line { position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 2px dashed var(--accent); }
+  .pct { font-size: 13px; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .pct.low { color: var(--alert); }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); margin-top: 14px; flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+  .alerts { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .alerts li { background: var(--alert-bg); border-radius: 10px; padding: 12px 14px; }
+  .alerts .top { display: flex; justify-content: space-between; font-weight: 600; font-size: 14px; }
+  .alerts .top span:last-child { color: var(--alert); }
+  .alerts .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .empty { color: var(--muted); font-size: 13px; padding: 12px 0; }
+  .error { background: var(--alert-bg); color: var(--alert); padding: 14px 16px; border-radius: 10px; font-size: 14px; }
+  @media (max-width: 820px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .grid { grid-template-columns: 1fr; }
+    .row { grid-template-columns: 110px 1fr 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Outlet <span>performance</span></h1>
+      <div class="sub" id="range"></div>
+    </div>
+    <div class="filter" id="filter" role="tablist" aria-label="Filter by outlet"></div>
+  </header>
+
+  <div id="error"></div>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <div class="card">
+      <h2>Sales as % of target</h2>
+      <div class="hint">One bar per outlet-week. Dashed line marks 100% of target.</div>
+      <div id="bars"></div>
+      <div class="legend">
+        <span><i style="background:var(--bar)"></i>90% or above</span>
+        <span><i style="background:var(--alert)"></i>Below 90%</span>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Needs attention</h2>
+      <div class="hint">Outlet-weeks under 90% of target.</div>
+      <ul class="alerts" id="alerts"></ul>
+    </div>
+  </section>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   DATA LOADING — the only place data enters the dashboard.
+   Must resolve to an array of:
+   { outlet, week (YYYY-MM-DD), sales, target, orders, returns }
+
+   To connect Supabase later, replace the body of loadData() with e.g.:
+     const { data, error } = await supabase
+       .from('outlet_weekly')
+       .select('outlet, week, sales, target, orders, returns')
+       .order('week');
+     if (error) throw error;
+     return data;
+------------------------------------------------------------------- */
+async function loadData() {
+  const csv = `outlet,week,sales,target,orders,returns
+Tampines,2026-09-07,18400,18000,612,9
+Tampines,2026-09-14,16100,18000,540,14
+Tampines,2026-09-21,19200,18000,640,8
+Jurong,2026-09-07,14200,15000,488,11
+Jurong,2026-09-14,12600,15000,430,19
+Jurong,2026-09-21,15300,15000,512,10
+Orchard,2026-09-07,22500,24000,690,12
+Orchard,2026-09-14,20100,24000,612,21
+Orchard,2026-09-21,24800,24000,742,9`;
+  const [head, ...lines] = csv.trim().split('\n');
+  const cols = head.split(',');
+  return lines.map(l => {
+    const v = l.split(',');
+    const r = {};
+    cols.forEach((c, i) => r[c] = v[i]);
+    ['sales', 'target', 'orders', 'returns'].forEach(k => r[k] = Number(r[k]));
+    return r;
+  });
+}
+
+/* ---------- App ---------- */
+const THRESHOLD = 0.9;
+const OUTLETS = ['All', 'Tampines', 'Jurong', 'Orchard'];
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+let ALL = [];
+let current = 'All';
+
+const $ = id => document.getElementById(id);
+const fmtInt = n => n.toLocaleString('en-GB');
+const fmtMoney = n => 'S$' + n.toLocaleString('en-GB');
+const fmtPct = (n, d = 1) => (n * 100).toFixed(d) + '%';
+const fmtDate = iso => { const [y, m, d] = iso.split('-').map(Number); return `${d} ${MONTHS[m - 1]} ${y}`; };
+
+function render() {
+  const rows = current === 'All' ? ALL : ALL.filter(r => r.outlet === current);
+
+  document.querySelectorAll('#filter button').forEach(b =>
+    b.classList.toggle('active', b.dataset.outlet === current));
+
+  if (!rows.length) {
+    $('kpis').innerHTML = '';
+    $('bars').innerHTML = '<div class="empty">No data for this selection.</div>';
+    $('alerts').innerHTML = '';
+    return;
+  }
+
+  const sales = rows.reduce((s, r) => s + r.sales, 0);
+  const target = rows.reduce((s, r) => s + r.target, 0);
+  const orders = rows.reduce((s, r) => s + r.orders, 0);
+  const returns = rows.reduce((s, r) => s + r.returns, 0);
+  const pct = target ? sales / target : 0;
+  const retPct = orders ? returns / orders : 0;
+
+  $('kpis').innerHTML = [
+    ['Total sales', fmtMoney(sales), `Target ${fmtMoney(target)}`, ''],
+    ['% of target', fmtPct(pct), pct >= 1 ? 'On or above target' : 'Below target', 'hl'],
+    ['Orders', fmtInt(orders), `${fmtMoney(Math.round(sales / orders))} average order`, ''],
+    ['Returns %', fmtPct(retPct), `${fmtInt(returns)} returns`, '']
+  ].map(([l, v, n, c]) =>
+    `<div class="card kpi ${c}"><div class="label">${l}</div><div class="value">${v}</div><div class="note">${n}</div></div>`
+  ).join('');
+
+  const weeks = [...new Set(rows.map(r => r.week))].sort();
+  $('range').textContent = `Weeks commencing ${fmtDate(weeks[0])} to ${fmtDate(weeks[weeks.length - 1])}`;
+
+  const sorted = [...rows].sort((a, b) => a.outlet.localeCompare(b.outlet) || a.week.localeCompare(b.week));
+  const SCALE = 1.2; // track spans 0–120% so the 100% line sits inside
+  $('bars').innerHTML = sorted.map(r => {
+    const p = r.sales / r.target;
+    const low = p < THRESHOLD;
+    return `<div class="row">
+      <div class="name">${r.outlet}<small>${fmtDate(r.week)}</small></div>
+      <div class="track">
+        <div class="fill ${low ? 'low' : ''}" style="width:${Math.min(p / SCALE, 1) * 100}%"></div>
+        <div class="target-line" style="left:${100 / SCALE}%"></div>
+      </div>
+      <div class="pct ${low ? 'low' : ''}">${fmtPct(p, 0)}</div>
+    </div>`;
+  }).join('');
+
+  const flagged = sorted.filter(r => r.sales / r.target < THRESHOLD)
+    .sort((a, b) => a.sales / a.target - b.sales / b.target);
+  $('alerts').innerHTML = flagged.length
+    ? flagged.map(r => `<li>
+        <div class="top"><span>${r.outlet} · ${fmtDate(r.week)}</span><span>${fmtPct(r.sales / r.target, 1)}</span></div>
+        <div class="meta">${fmtMoney(r.sales)} vs ${fmtMoney(r.target)} target · short by ${fmtMoney(r.target - r.sales)}</div>
+      </li>`).join('')
+    : '<li class="empty" style="background:none;padding:0">No outlet-weeks under 90% of target.</li>';
+}
+
+(async function init() {
+  $('filter').innerHTML = OUTLETS.map(o =>
+    `<button type="button" data-outlet="${o}" role="tab">${o}</button>`).join('');
+  $('filter').addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (b) { current = b.dataset.outlet; render(); }
+  });
+  try {
+    ALL = await loadData();
+    render();
+  } catch (err) {
+    $('error').innerHTML = `<div class="error">Could not load data: ${err.message}</div>`;
+  }
+})();
+</script>
+</body>
+</html>
